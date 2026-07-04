@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 import uvicorn
 import cognee
 import os
@@ -8,6 +8,16 @@ import json
 import glob
 from datetime import datetime
 from dotenv import load_dotenv
+from cognee.api.v1.search import SearchType
+import openai
+
+load_dotenv()
+
+# Global LLM Client for evaluation (ARCH-01)
+llm_client = openai.AsyncOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "sk-1234"),
+    base_url=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:4000")
+)
 
 def save_failed_payload(payload: str, endpoint: str):
     os.makedirs("FailedPayloads", exist_ok=True)
@@ -16,8 +26,6 @@ def save_failed_payload(payload: str, endpoint: str):
         f.write(payload)
     print(f"\n[!] ULTIMATE FALLBACK TRIGGERED:")
     print(f"[!] Payload safely written to {filename}\n")
-
-load_dotenv()
 
 # The fast in-memory queue
 payload_queue = asyncio.Queue()
@@ -111,11 +119,21 @@ async def add_memory(request: Request):
         print(f"Error queueing memory: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+async def background_ingest_and_cognify(payload: str):
+    try:
+        print("-> [Background] Injecting Setup into Cognee...")
+        await cognee.add(payload, dataset_name="nq_live_trades")
+        print("-> [Background] Cognifying Setup for Active Analysis...")
+        await cognee.cognify()
+        print("-> [Background] Active Analysis Cognify Complete!")
+    except Exception as e:
+        print(f"-> [Background] Error cognifying active setup: {str(e)}")
+
 @app.post("/analyze")
-async def analyze_setup(request: Request):
+async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
     """
     Receives Morning Setup JSON payload from Indicator at 10:00 AM, 
-    adds it to the graph, cognifies, and returns an AI score.
+    queries the graph for AI Score, and queues the payload for background cognification.
     """
     try:
         data = await request.json()
@@ -129,24 +147,110 @@ async def analyze_setup(request: Request):
         print(payload)
         print("="*50 + "\n")
         
-        print("1. Injecting Setup into Cognee...")
-        await cognee.add(payload, dataset_name="nq_live_trades")
+        print("1. Querying Knowledge Graph for Similar Historical Outcomes...")
         
-        print("2. Cognifying Setup for Active Analysis...")
-        await cognee.cognify()
+        search_query = (
+            "Find historical trading sessions with similar structural states to this payload. "
+            "Look for matching Profile Shapes and similar Value Area/POC placement. "
+            "Retrieve the final trade Result (e.g. SL Hit, TP Hit) and Exit Reason for those matches. "
+            f"Current Payload Context: {payload}"
+        )
         
-        print("3. Generating AI Score (Placeholder Logic)...")
-        # TODO: Replace placeholder with actual Gemini Prompt/Search logic
-        ai_score = "85"
-        win_probability = "75%"
+        # Step 1: Perform search with strict timeout
+        try:
+            cognee_results = await asyncio.wait_for(
+                cognee.search(SearchType.INSIGHTS, query_text=search_query),
+                timeout=2.0
+            )
+        except asyncio.TimeoutError:
+            print("[!] Cognee Search Timeout! Triggering Cold Start Fail-Safe.")
+            background_tasks.add_task(background_ingest_and_cognify, payload)
+            return {
+                "status": "success", 
+                "ai_score": "50", 
+                "win_probability": "50%",
+                "narrative": "Search timeout. Cold Start."
+            }
         
-        print(f"-> Returning Score: {ai_score} | Probability: {win_probability}\n")
+        # Step 2: EXEC-01 Cold Start Check and ARCH-02 Token Optimization
+        if not cognee_results:
+            print("-> Insufficient Historical Data. Triggering Cold Start Fail-Safe.")
+            background_tasks.add_task(background_ingest_and_cognify, payload)
+            return {
+                "status": "success", 
+                "ai_score": "50", 
+                "win_probability": "50%",
+                "narrative": "Insufficient Historical Data. Cold Start."
+            }
+            
+        # Condense the results to save tokens (ARCH-02)
+        condensed_results = []
+        for res in cognee_results:
+            res_str = str(res)
+            # Take a generous slice to preserve outcome keywords while preventing massive token dumps
+            condensed_results.append(res_str[:500])
+            
+        optimized_context = " | ".join(condensed_results)
+        
+        if not optimized_context.strip():
+            print("-> Extracted context is empty. Triggering Cold Start Fail-Safe.")
+            background_tasks.add_task(background_ingest_and_cognify, payload)
+            return {
+                "status": "success", 
+                "ai_score": "50", 
+                "win_probability": "50%",
+                "narrative": "Insufficient Historical Data. Cold Start."
+            }
+        
+        print("2. Evaluating historical results to generate Probability...")
+        
+        # Step 3: LLM Evaluation with Try/Except Shielding and Strict Timeout (EXEC-02)
+        try:
+            response_coro = llm_client.chat.completions.create(
+                model="antigravity-router",
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": (
+                        "You are a quantitative trading AI. Analyze the historical graph facts provided. "
+                        "Determine the overall success rate based on past Results (e.g. SL Hit = Loss, TP Hit = Win). "
+                        "Calculate a Win Probability % and an AI Score out of 100. "
+                        "ADVANCED INSTRUCTIONS: "
+                        "1. Weight recent dates heavier. "
+                        "2. Lower the score significantly if past trades show heavy Stop Loss clusters. "
+                        "3. Return strict JSON: {\"ai_score\": \"XX\", \"win_probability\": \"XX%\", \"narrative\": \"brief explanation\"}"
+                    )},
+                    {"role": "user", "content": f"Graph Results:\n{optimized_context}"}
+                ],
+                timeout=3.0 # Protect against hanging requests
+            )
+            
+            # Absolute hard cap to ensure C# UI isn't hung
+            response = await asyncio.wait_for(response_coro, timeout=3.5)
+            
+            ai_evaluation = json.loads(response.choices[0].message.content)
+            
+            ai_score = str(ai_evaluation.get("ai_score", "50"))
+            win_probability = str(ai_evaluation.get("win_probability", "50%"))
+            narrative = str(ai_evaluation.get("narrative", "Evaluation successful."))
+            
+        except Exception as llm_err:
+            print(f"[!] LLM Evaluation Failed (Timeout or Parsing Error): {str(llm_err)}")
+            print("-> Falling back to Cold Start baseline.")
+            ai_score = "50"
+            win_probability = "50%"
+            narrative = "Insufficient Historical Data. Cold Start."
+            
+        print(f"-> AI Evaluation Complete. Returning Score: {ai_score} | Probability: {win_probability}\n")
+        
+        # Enqueue the heavy graph insertion/cognification so we don't block the HTTP response
+        print("3. Queueing payload for background graph insertion...")
+        background_tasks.add_task(background_ingest_and_cognify, payload)
         
         return {
             "status": "success", 
             "ai_score": ai_score, 
             "win_probability": win_probability,
-            "narrative": "Similar past setups showed strong expansion."
+            "narrative": narrative
         }
         
     except Exception as e:

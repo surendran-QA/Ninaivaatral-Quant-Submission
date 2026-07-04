@@ -5,8 +5,8 @@ echo Shutting down all AI Engine Servers...
 echo ==========================================
 
 :: Kills any window with these specific titles
-taskkill /F /FI "WINDOWTITLE eq LiteLLM Proxy*" /T >nul 2>&1
-taskkill /F /FI "WINDOWTITLE eq Cognee Engine*" /T >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq 2_START_LITELLM_PROXY*" /T >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq 3_START_COGNEE_ENGINE*" /T >nul 2>&1
 
 :: Also explicitly kill the python processes launched by these bats if they detached
 taskkill /F /IM litellm.exe >nul 2>&1
