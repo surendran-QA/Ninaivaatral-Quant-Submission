@@ -1,0 +1,6 @@
+fix(backend): upgrade llm router and optimize payload queuing
+
+- Migrated LiteLLM router configuration to strictly adhere to IDE Proxy Rules ('gemini-3.1-flash-lite' for generation and 'gemini-embedding-2' for embeddings).
+- Implemented robust file-based queuing for incoming Webhook Payloads in 'server.py'.
+- Modified memory endpoint to immediately save payloads to 'IngestionQueue', allowing the background worker to pace API calls to Google Gemini using a 60-second cooldown loop.
+- Refactored server terminal logging to provide cleaner, distinct UI blocks for Payload 1 (Active Analysis) and Payload 2 (Post-Trade Memory).

@@ -36,6 +36,9 @@ async def background_worker():
     print("[Background Worker] Started and listening for payloads...")
     while True:
         filepath = await payload_queue.get()
+        print("\n" + "="*60)
+        print(f"💾 [PAYLOAD 2] POST-TRADE MEMORY INGESTION STARTED")
+        print("="*60)
         print(f"[Background Worker] Processing {filepath}...")
         
         try:
@@ -50,15 +53,17 @@ async def background_worker():
             payload = data.get("payload")
             auto_cognify = data.get("auto_cognify", False)
             
-            print("1. Injecting into Cognee Memory Engine...")
+            print("1. [+] Injecting Raw Payload into Cognee Memory Engine...")
             await cognee.add(payload, dataset_name="nq_live_trades")
             
             if auto_cognify:
-                print("2. Cognifying (Extracting Knowledge Graph via Gemini)...")
+                print("2. [>] Cognifying (Extracting Knowledge Graph via Gemini)...")
                 await cognee.cognify()
-                print("3. Memory successfully embedded and cognified!")
+                print("3. [OK] Memory Successfully Embedded and Cognified!")
+                print("="*60 + "\n")
             else:
-                print("2. Skipping Cognify (Saved for manual batch processing).")
+                print("2. [>>] Skipping Cognify (Saved for manual batch processing).")
+                print("="*60 + "\n")
             
             # Success! Delete the persistent file
             os.remove(filepath)
@@ -73,9 +78,9 @@ async def background_worker():
         
         payload_queue.task_done()
         
-        # CRITICAL PACING: Wait 20 seconds before taking next item from queue
-        print("[Background Worker] Pacing... Sleeping for 20 seconds to protect RPM limit.")
-        await asyncio.sleep(20)
+        # CRITICAL PACING: Wait 60 seconds before taking next item from queue
+        print("[Background Worker] Pacing... Sleeping for 60 seconds to protect RPM limit.")
+        await asyncio.sleep(60)
 
 app = FastAPI(title="Ninaivaatral Quant - Cognee Integration")
 
@@ -121,16 +126,18 @@ async def add_memory(request: Request):
 
 async def background_ingest_and_cognify(payload: str):
     try:
-        print("-> [Background] Injecting Setup into Cognee...")
+        print("\n" + "-"*50)
+        print("-> [Background Task] [+] Injecting Active Setup into Cognee...")
         await cognee.add(payload, dataset_name="nq_live_trades")
-        print("-> [Background] Cognifying Setup for Active Analysis...")
+        print("-> [Background Task] [>] Cognifying Setup for Graph Insertion...")
         await cognee.cognify()
-        print("-> [Background] Active Analysis Cognify Complete!")
+        print("-> [Background Task] [OK] Active Analysis Cognify Complete!")
+        print("-" * 50 + "\n")
     except Exception as e:
-        print(f"-> [Background] Error cognifying active setup: {str(e)}")
+        print(f"-> [Background Task] Error cognifying active setup: {str(e)}")
 
 @app.post("/analyze")
-async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
+async def analyze_setup(request: Request):
     """
     Receives Morning Setup JSON payload from Indicator at 10:00 AM, 
     queries the graph for AI Score, and queues the payload for background cognification.
@@ -142,12 +149,13 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
         if not payload:
             return {"status": "error", "message": "No payload provided"}
             
-        print("\n" + "="*50)
-        print(f"[Ninaivaatral Quant] Received ACTIVE ANALYSIS Request:")
+        print("\n" + "="*60)
+        print(f">>> [PAYLOAD 1] ACTIVE ANALYSIS REQUEST RECEIVED")
+        print("="*60)
         print(payload)
-        print("="*50 + "\n")
+        print("="*60)
         
-        print("1. Querying Knowledge Graph for Similar Historical Outcomes...")
+        print("\n1. [?] Querying Knowledge Graph for Similar Historical Outcomes...")
         
         search_query = (
             "Find historical trading sessions with similar structural states to this payload. "
@@ -158,12 +166,18 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
         
         try:
             cognee_results = await asyncio.wait_for(
-                cognee.search(SearchType.SUMMARIES, query_text=search_query),
-                timeout=2.0
+                cognee.search(query_text=search_query, query_type=SearchType.SUMMARIES),
+                timeout=15.0
             )
         except asyncio.TimeoutError:
             print("[!] Cognee Search Timeout! Triggering Cold Start Fail-Safe.")
-            background_tasks.add_task(background_ingest_and_cognify, payload)
+            
+            # Route to single queue to prevent SQLite concurrent lock
+            filename = f"{INGESTION_DIR}/payload_analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
+            with open(filename, "w") as f:
+                json.dump({"payload": payload, "auto_cognify": True}, f)
+            await payload_queue.put(filename)
+            
             return {
                 "status": "success", 
                 "confidence_score": "50", 
@@ -174,7 +188,13 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
         # Step 2: EXEC-01 Cold Start Check and ARCH-02 Token Optimization
         if not cognee_results:
             print("-> Insufficient Historical Data. Triggering Cold Start Fail-Safe.")
-            background_tasks.add_task(background_ingest_and_cognify, payload)
+            
+            # Route to single queue to prevent SQLite concurrent lock
+            filename = f"{INGESTION_DIR}/payload_analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
+            with open(filename, "w") as f:
+                json.dump({"payload": payload, "auto_cognify": True}, f)
+            await payload_queue.put(filename)
+            
             return {
                 "status": "success", 
                 "confidence_score": "50", 
@@ -193,7 +213,13 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
         
         if not optimized_context.strip():
             print("-> Extracted context is empty. Triggering Cold Start Fail-Safe.")
-            background_tasks.add_task(background_ingest_and_cognify, payload)
+            
+            # Route to single queue to prevent SQLite concurrent lock
+            filename = f"{INGESTION_DIR}/payload_analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
+            with open(filename, "w") as f:
+                json.dump({"payload": payload, "auto_cognify": True}, f)
+            await payload_queue.put(filename)
+            
             return {
                 "status": "success", 
                 "confidence_score": "50", 
@@ -201,7 +227,7 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
                 "narrative": "Insufficient Historical Data. Cold Start."
             }
         
-        print("2. Evaluating historical results to generate Probability...")
+        print("2. [>] Gemini LLM Generating Narrative & Probability...")
         
         # Step 3: LLM Evaluation with Try/Except Shielding and Strict Timeout (EXEC-02)
         try:
@@ -220,11 +246,11 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
                     )},
                     {"role": "user", "content": f"Graph Results:\n{optimized_context}"}
                 ],
-                timeout=3.0 # Protect against hanging requests
+                timeout=15.0 # Protect against hanging requests
             )
             
             # Absolute hard cap to ensure C# UI isn't hung
-            response = await asyncio.wait_for(response_coro, timeout=3.5)
+            response = await asyncio.wait_for(response_coro, timeout=15.0)
             
             ai_evaluation = json.loads(response.choices[0].message.content)
             
@@ -239,11 +265,16 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
             historical_win_rate = "50%"
             narrative = "Insufficient Historical Data. Cold Start."
             
-        print(f"-> Analysis Complete. Returning Score: {confidence_score} | Probability: {historical_win_rate}\n")
+        print(f"-> [OK] Analysis Complete! Score: {confidence_score} | Probability: {historical_win_rate}\n")
         
         # Enqueue the heavy graph insertion/cognification so we don't block the HTTP response
-        print("3. Queueing payload for background graph insertion...")
-        background_tasks.add_task(background_ingest_and_cognify, payload)
+        print("3. [+] Queueing Active Payload for Background Graph Insertion...")
+        
+        # Route to single queue to prevent SQLite concurrent lock
+        filename = f"{INGESTION_DIR}/payload_analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
+        with open(filename, "w") as f:
+            json.dump(data, f)
+        await payload_queue.put(filename)
         
         return {
             "status": "success", 
