@@ -4,12 +4,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-key = os.getenv("LLM_API_KEY")
+key = os.getenv("GEMINI_API_KEY")
 print(f"Testing API Key starting with: {key[:10] if key else 'None'}")
 
 models_to_test = [
-    "gemini/text-embedding-004",
-    "gemini/embedding-001"
+    "gemini/gemini-embedding-2"
 ]
 
 for model in models_to_test:

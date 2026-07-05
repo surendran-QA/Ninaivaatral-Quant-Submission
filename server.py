@@ -167,8 +167,8 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
             background_tasks.add_task(background_ingest_and_cognify, payload)
             return {
                 "status": "success", 
-                "ai_score": "50", 
-                "win_probability": "50%",
+                "confidence_score": "50", 
+                "historical_win_rate": "50%",
                 "narrative": "Search timeout. Cold Start."
             }
         
@@ -178,8 +178,8 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
             background_tasks.add_task(background_ingest_and_cognify, payload)
             return {
                 "status": "success", 
-                "ai_score": "50", 
-                "win_probability": "50%",
+                "confidence_score": "50", 
+                "historical_win_rate": "50%",
                 "narrative": "Insufficient Historical Data. Cold Start."
             }
             
@@ -197,8 +197,8 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
             background_tasks.add_task(background_ingest_and_cognify, payload)
             return {
                 "status": "success", 
-                "ai_score": "50", 
-                "win_probability": "50%",
+                "confidence_score": "50", 
+                "historical_win_rate": "50%",
                 "narrative": "Insufficient Historical Data. Cold Start."
             }
         
@@ -213,11 +213,11 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
                     {"role": "system", "content": (
                         "You are a quantitative trading AI. Analyze the historical graph facts provided. "
                         "Determine the overall success rate based on past Results (e.g. SL Hit = Loss, TP Hit = Win). "
-                        "Calculate a Win Probability % and an AI Score out of 100. "
+                        "Calculate a Historical Win Rate % and a Confidence Score out of 100. "
                         "ADVANCED INSTRUCTIONS: "
                         "1. Weight recent dates heavier. "
                         "2. Lower the score significantly if past trades show heavy Stop Loss clusters. "
-                        "3. Return strict JSON: {\"ai_score\": \"XX\", \"win_probability\": \"XX%\", \"narrative\": \"brief explanation\"}"
+                        "3. Return strict JSON: {\"confidence_score\": \"XX\", \"historical_win_rate\": \"XX%\", \"narrative\": \"brief explanation\"}"
                     )},
                     {"role": "user", "content": f"Graph Results:\n{optimized_context}"}
                 ],
@@ -229,18 +229,18 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
             
             ai_evaluation = json.loads(response.choices[0].message.content)
             
-            ai_score = str(ai_evaluation.get("ai_score", "50"))
-            win_probability = str(ai_evaluation.get("win_probability", "50%"))
+            confidence_score = str(ai_evaluation.get("confidence_score", "50"))
+            historical_win_rate = str(ai_evaluation.get("historical_win_rate", "50%"))
             narrative = str(ai_evaluation.get("narrative", "Evaluation successful."))
             
         except Exception as llm_err:
             print(f"[!] LLM Evaluation Failed (Timeout or Parsing Error): {str(llm_err)}")
             print("-> Falling back to Cold Start baseline.")
-            ai_score = "50"
-            win_probability = "50%"
+            confidence_score = "50"
+            historical_win_rate = "50%"
             narrative = "Insufficient Historical Data. Cold Start."
             
-        print(f"-> AI Evaluation Complete. Returning Score: {ai_score} | Probability: {win_probability}\n")
+        print(f"-> Analysis Complete. Returning Score: {confidence_score} | Probability: {historical_win_rate}\n")
         
         # Enqueue the heavy graph insertion/cognification so we don't block the HTTP response
         print("3. Queueing payload for background graph insertion...")
@@ -248,8 +248,8 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
         
         return {
             "status": "success", 
-            "ai_score": ai_score, 
-            "win_probability": win_probability,
+            "confidence_score": confidence_score, 
+            "historical_win_rate": historical_win_rate,
             "narrative": narrative
         }
         

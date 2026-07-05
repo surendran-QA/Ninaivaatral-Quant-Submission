@@ -1,7 +1,7 @@
 @echo off
 title 0_STOP_ALL_SERVERS
 echo ==========================================
-echo Shutting down all AI Engine Servers...
+echo Shutting down all Quant Engine Servers...
 echo ==========================================
 
 :: Kills any window with these specific titles
