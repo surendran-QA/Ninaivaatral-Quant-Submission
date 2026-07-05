@@ -156,10 +156,9 @@ async def analyze_setup(request: Request, background_tasks: BackgroundTasks):
             f"Current Payload Context: {payload}"
         )
         
-        # Step 1: Perform search with strict timeout
         try:
             cognee_results = await asyncio.wait_for(
-                cognee.search(SearchType.INSIGHTS, query_text=search_query),
+                cognee.search(SearchType.SUMMARIES, query_text=search_query),
                 timeout=2.0
             )
         except asyncio.TimeoutError:
