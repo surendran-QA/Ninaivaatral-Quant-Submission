@@ -1,3 +1,3 @@
 {
-  "payload": "[SESSION ID: TEST_2026-07-05]\n[MARKET CONTEXT NODE]\nEvent Tag: Signal Generated\nDay of Week: Monday\nAsset: MNQU26\nTimestamp: 2026-07-05 10:00:00\n\n[STRUCTURAL STATE NODE]\nProfile Shape: bShape\nTotal Session Volume: 1500.5\nSession Extremes: IB_High 30000 | IB_Low 29000\nValue Area: VAH 29800 (80%) | POC 29500 (50%) | VAL 29200 (20%)"
+  "payload": "[SESSION ID: TEST_2026-07-05]\n[MARKET CONTEXT NODE]\nStrategy: FVP_IB_Strategy\nEvent Tag: PRE_TRADE: Signal Generated\nDay of Week: Monday\nAsset Group: NQ\nAsset: MNQU26\nTimestamp: 2026-07-05 10:00:00\n\n[STRUCTURAL STATE NODE]\nProfile Shape: bShape\nTotal Session Volume: 1500.5\nSession Extremes: IB_High 30000 | IB_Low 29000\nValue Area: VAH 29800 (80%) | POC 29500 (50%) | VAL 29200 (20%)"
 }
