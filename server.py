@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request, BackgroundTasks
 import uvicorn
 import cognee
 import os
+import sys
 import uuid
 import json
 import glob
@@ -34,11 +35,14 @@ os.makedirs(INGESTION_DIR, exist_ok=True)
 
 async def background_worker():
     print("[Background Worker] Started and listening for payloads...")
+    payload_counter = 0
     while True:
         filepath = await payload_queue.get()
+        payload_counter += 1
         print("\n" + "="*60)
-        print(f"💾 [PAYLOAD 2] POST-TRADE MEMORY INGESTION STARTED")
+        print(f"💾 [PAYLOAD {payload_counter}] POST-TRADE MEMORY INGESTION STARTED")
         print("="*60)
+        print(f"[Background Worker] Payload {payload_counter} received | data processing started\n")
         print(f"[Background Worker] Processing {filepath}...")
         
         try:
@@ -57,12 +61,15 @@ async def background_worker():
             await cognee.add(payload, dataset_name="nq_live_trades")
             
             if auto_cognify:
-                print("2. [>] Cognifying (Extracting Knowledge Graph via Gemini)...")
+                print("2. [>] Cognifying (Extracting Knowledge Graph via Mistral)...")
                 await cognee.cognify()
-                print("3. [OK] Memory Successfully Embedded and Cognified!")
+                print("3. [OK] Trade Data Successfully Extracted into AI Knowledge Graph!")
+                print("-> [INFO] Mistral LLM has mapped the new market relationships for future predictions.")
+                print(f"[Background Worker] Payload {payload_counter} received | data processing Completed")
                 print("="*60 + "\n")
             else:
                 print("2. [>>] Skipping Cognify (Saved for manual batch processing).")
+                print(f"[Background Worker] Payload {payload_counter} received | data processing Completed")
                 print("="*60 + "\n")
             
             # Success! Delete the persistent file
@@ -79,13 +86,22 @@ async def background_worker():
         payload_queue.task_done()
         
         # CRITICAL PACING: Wait 60 seconds before taking next item from queue
-        print("[Background Worker] Pacing... Sleeping for 60 seconds to protect RPM limit.")
-        await asyncio.sleep(60)
+        print("[Background Worker] Pacing to protect RPM limit...")
+        for i in range(60, 0, -1):
+            sys.stdout.write(f"\r[Background Worker] Next extraction in {i} seconds...   ")
+            sys.stdout.flush()
+            await asyncio.sleep(1)
+        sys.stdout.write("\r[Background Worker] Ready for next payload!               \n")
 
 app = FastAPI(title="Ninaivaatral Quant - Cognee Integration")
 
+import console_ui
+
 @app.on_event("startup")
 async def startup_event():
+    # 0. Print the Startup Logo
+    console_ui.print_logo()
+    
     # 1. Recover any payloads that were dropped during a server crash
     pending_files = glob.glob(f"{INGESTION_DIR}/*.json")
     for file in pending_files:
@@ -136,12 +152,15 @@ async def background_ingest_and_cognify(payload: str):
     except Exception as e:
         print(f"-> [Background Task] Error cognifying active setup: {str(e)}")
 
+analyze_counter = 0
+
 @app.post("/analyze")
 async def analyze_setup(request: Request):
     """
     Receives Morning Setup JSON payload from Indicator at 10:00 AM, 
     queries the graph for AI Score, and queues the payload for background cognification.
     """
+    global analyze_counter
     try:
         data = await request.json()
         payload = data.get("payload")
@@ -149,8 +168,9 @@ async def analyze_setup(request: Request):
         if not payload:
             return {"status": "error", "message": "No payload provided"}
             
+        analyze_counter += 1
         print("\n" + "="*60)
-        print(f">>> [PAYLOAD 1] ACTIVE ANALYSIS REQUEST RECEIVED")
+        print(f">>> [PAYLOAD {analyze_counter}] ACTIVE ANALYSIS REQUEST RECEIVED")
         print("="*60)
         print(payload)
         print("="*60)
@@ -169,8 +189,9 @@ async def analyze_setup(request: Request):
                 cognee.search(query_text=search_query, query_type=SearchType.SUMMARIES),
                 timeout=15.0
             )
-        except asyncio.TimeoutError:
-            print("[!] Cognee Search Timeout! Triggering Cold Start Fail-Safe.")
+        except Exception as search_err:
+            print(f"[!] Cognee Search Failed: {str(search_err)}")
+            print("-> [WARNING] Triggering Cold Start Fail-Safe.")
             
             # Route to single queue to prevent SQLite concurrent lock
             filename = f"{INGESTION_DIR}/payload_analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
@@ -178,16 +199,19 @@ async def analyze_setup(request: Request):
                 json.dump({"payload": payload, "auto_cognify": True}, f)
             await payload_queue.put(filename)
             
+            print("-> [OK] Baseline Generated! Confidence Score: N/A | Historical Win Rate: N/A")
+            print("-> [INFO] Suggestion Sent to Quantower C# Webhook.\n")
             return {
                 "status": "success", 
-                "confidence_score": "50", 
-                "historical_win_rate": "50%",
-                "narrative": "Search timeout. Cold Start."
+                "confidence_score": "N/A", 
+                "historical_win_rate": "N/A",
+                "narrative": "Cold Start. Initializing Database."
             }
         
         # Step 2: EXEC-01 Cold Start Check and ARCH-02 Token Optimization
         if not cognee_results:
-            print("-> Insufficient Historical Data. Triggering Cold Start Fail-Safe.")
+            print("[!] Cognee Search Failed: Insufficient Historical Data.")
+            print("-> [WARNING] Triggering Cold Start Fail-Safe.")
             
             # Route to single queue to prevent SQLite concurrent lock
             filename = f"{INGESTION_DIR}/payload_analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
@@ -195,10 +219,12 @@ async def analyze_setup(request: Request):
                 json.dump({"payload": payload, "auto_cognify": True}, f)
             await payload_queue.put(filename)
             
+            print("-> [OK] Baseline Generated! Confidence Score: N/A | Historical Win Rate: N/A")
+            print("-> [INFO] Suggestion Sent to Quantower C# Webhook.\n")
             return {
                 "status": "success", 
-                "confidence_score": "50", 
-                "historical_win_rate": "50%",
+                "confidence_score": "N/A", 
+                "historical_win_rate": "N/A",
                 "narrative": "Insufficient Historical Data. Cold Start."
             }
             
@@ -227,7 +253,7 @@ async def analyze_setup(request: Request):
                 "narrative": "Insufficient Historical Data. Cold Start."
             }
         
-        print("2. [>] Gemini LLM Generating Narrative & Probability...")
+        print("2. [>] Mistral-Large AI Analyzing Historical Outcomes & Calculating Probabilities...")
         
         # Step 3: LLM Evaluation with Try/Except Shielding and Strict Timeout (EXEC-02)
         try:
@@ -260,12 +286,13 @@ async def analyze_setup(request: Request):
             
         except Exception as llm_err:
             print(f"[!] LLM Evaluation Failed (Timeout or Parsing Error): {str(llm_err)}")
-            print("-> Falling back to Cold Start baseline.")
-            confidence_score = "50"
-            historical_win_rate = "50%"
+            print("-> [WARNING] Triggering Cold Start Fail-Safe.")
+            confidence_score = "N/A"
+            historical_win_rate = "N/A"
             narrative = "Insufficient Historical Data. Cold Start."
             
-        print(f"-> [OK] Analysis Complete! Score: {confidence_score} | Probability: {historical_win_rate}\n")
+        print(f"-> [OK] AI Suggestion Generated! Confidence Score: {confidence_score} | Historical Win Rate: {historical_win_rate}")
+        print("-> [INFO] Suggestion Sent to Quantower C# Webhook.\n")
         
         # Enqueue the heavy graph insertion/cognification so we don't block the HTTP response
         print("3. [+] Queueing Active Payload for Background Graph Insertion...")
